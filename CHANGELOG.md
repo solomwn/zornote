@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.1 – text selection fix
+- Fixed: dragging the mouse across several lines of text made an **invisible** whole-line selection (meant only for
+  selecting several tables), so text seemed impossible to select and the next drag moved the text instead.
+  Plain lines now select normally; whole-block selection happens only when a table is in the range.
+
 ## 0.5.0 – simpler new group
 - **New group** now creates just the group with one section, **New Section** (like OneNote), instead of the six standard sections.
   *Duplicate group structure* still copies the sections of an existing group.

@@ -1,6 +1,6 @@
 [package]
 name = "zornote"
-version = "0.5.0"
+version = "0.5.1"
 description = "OneNote-style notebook app for Linux"
 license = "MIT"
 repository = "https://github.com/solomwn/zornote"

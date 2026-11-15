@@ -9,6 +9,7 @@ import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
  * Selecting several tables at once, like OneNote:
  *  - drag from one table into another (or past the lines between them) → all of them are selected
  *  - Shift+click in another table extends the selection to it
+ * Only when a table is in the range: dragging over plain lines of text is a normal text selection.
  * The selection covers WHOLE blocks (tables and the lines between them), so Copy / Cut take complete tables.
  * Works inside a container too (tables nested in the same cell).
  */
@@ -66,6 +67,19 @@ export function blockRange(doc: PMNode, a: number, b: number): { from: number; t
   return { from: $a.posAtIndex(i1, d), to: $a.posAtIndex(i2 + 1, d) };
 }
 
+/** Whole-block selection is only for tables: a range of plain lines is selected as normal text. */
+function tableRange(doc: PMNode, a: number, b: number): { from: number; to: number } | null {
+  const r = blockRange(doc, a, b);
+  if (!r) return null;
+  let table = false;
+  doc.nodesBetween(r.from, r.to, (n) => {
+    if (table) return false;
+    if (n.type.spec.tableRole === "table") table = true;
+    return !table;
+  });
+  return table ? r : null;
+}
+
 const key = new PluginKey("blockSelect");
 
 function select(view: EditorView, r: { from: number; to: number }) {
@@ -106,7 +120,7 @@ export const BlockSelect = Extension.create({
               if (event.shiftKey) {
                 const cur = view.state.selection;
                 const anchor = cur instanceof BlockRangeSelection ? cur.from : cur.anchor;
-                const r = blockRange(view.state.doc, anchor, hit.pos);
+                const r = tableRange(view.state.doc, anchor, hit.pos);
                 if (r) {
                   event.preventDefault();
                   view.focus();
@@ -122,7 +136,7 @@ export const BlockSelect = Extension.create({
               const move = (e: MouseEvent) => {
                 const h = view.posAtCoords({ left: e.clientX, top: e.clientY });
                 if (!h) return;
-                const r = blockRange(view.state.doc, start, h.pos);
+                const r = tableRange(view.state.doc, start, h.pos);
                 if (r) {
                   active = true;
                   // after the table plugin has handled this move (it keeps a cell selection otherwise)
