@@ -15,7 +15,7 @@ import TaskItem from "@tiptap/extension-task-item";
 import { ResizableImage } from "./ResizableImage";
 import { getMarkRange } from "@tiptap/core";
 import LinkDialog from "./LinkDialog";
-import { isPageLink, openExternal, pageIdOf, pageLink, PAGE_LINK_PREFIX, type PageRef } from "../lib/links";
+import { findRef, KIND_LABEL, openExternal, parseZorLink, refTitle, type LinkKind, type PageRef } from "../lib/links";
 import Placeholder from "@tiptap/extension-placeholder";
 import Table from "@tiptap/extension-table";
 import TableRow from "@tiptap/extension-table-row";
@@ -162,7 +162,7 @@ export interface RibbonActions {
   /** every page of every notebook (for the Link dialog) */
   pages: () => PageRef[];
   /** go to a page (a page link was clicked) */
-  openPage: (pageId: string) => void;
+  openRef: (kind: LinkKind, id: string) => void;
   exportPagePdf: () => void;
   printPage: () => void;
   exportPageMd: () => void;
@@ -450,7 +450,8 @@ export default function Editor({ pageId, content, onChange, actions }: Props) {
   /** Follow a link: a ZorNote page opens here, anything else in the browser. */
   const followLink = (href: string) => {
     if (!href) return;
-    if (isPageLink(href)) actionsRef.current.openPage(pageIdOf(href));
+    const z = parseZorLink(href);
+    if (z) actionsRef.current.openRef(z.kind, z.id);
     else void openExternal(href).catch((err) => ask.alert("Could not open the link: " + err));
   };
   const [symOpen, setSymOpen] = useState(false);
@@ -513,14 +514,14 @@ export default function Editor({ pageId, content, onChange, actions }: Props) {
     editorProps: {
       handlePaste: (view, event) => {
         const plain = (event.clipboardData?.getData("text/plain") ?? "").trim();
-        if (plain.startsWith(PAGE_LINK_PREFIX) && !/\s/.test(plain)) {
-          // a link copied with "Copy Link to Page": paste it as a link named after the page (OneNote does this)
-          const ref = actionsRef.current.pages().find((x) => x.id === pageIdOf(plain));
+        if (parseZorLink(plain) && !/\s/.test(plain)) {
+          // a link copied with "Copy Link to Page/Section/Section Group": paste it as a link named after it (OneNote does this)
+          const ref = findRef(actionsRef.current.pages(), plain);
           const { from, to, empty } = view.state.selection;
           const mark = view.state.schema.marks.link.create({ href: plain });
           const tr = view.state.tr;
           if (empty) {
-            const label = ref?.title || "Untitled page";
+            const label = ref ? refTitle(ref) : "Link";
             tr.insertText(label, from, to).addMark(from, from + label.length, mark);
           } else {
             tr.addMark(from, to, mark); // selected words become the link
@@ -561,9 +562,12 @@ export default function Editor({ pageId, content, onChange, actions }: Props) {
           const a = (event.target as HTMLElement | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
           if (!a) return false;
           const href = a.getAttribute("href") ?? "";
-          if (isPageLink(href)) {
-            const ref = actionsRef.current.pages().find((x) => x.id === pageIdOf(href));
-            a.title = ref ? `Go to page: ${ref.title || "Untitled page"} (${ref.path})` : "This page no longer exists";
+          const z = parseZorLink(href);
+          if (z) {
+            const ref = findRef(actionsRef.current.pages(), href);
+            a.title = ref
+              ? `Go to ${KIND_LABEL[ref.kind]}: ${refTitle(ref)}${ref.path ? ` (${ref.path})` : ""}`
+              : `This ${KIND_LABEL[z.kind]} no longer exists`;
           } else {
             a.title = `${href}\nClick to open · Alt+click to edit the text`;
           }

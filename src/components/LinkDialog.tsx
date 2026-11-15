@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { isPageLink, normalizeAddress, pageIdOf, pageLink, type PageRef } from "../lib/links";
+import { findRef, KIND_LABEL, normalizeAddress, parseZorLink, refTitle, zorLink, type LinkKind, type PageRef } from "../lib/links";
+
+const ICON: Record<LinkKind, string> = { notebook: "📓", group: "🗂", section: "▤", page: "📄" };
 
 /**
- * OneNote's Link dialog (Ctrl+K): Text to display, Address, and every page of every notebook to link to.
+ * OneNote's Link dialog (Ctrl+K): Text to display, Address, and every notebook, section group, section and page to link to.
  */
 export default function LinkDialog({
   initialText, initialHref, pages, editing, onOk, onRemove, onCancel,
@@ -27,28 +29,21 @@ export default function LinkDialog({
     setTimeout(() => (initialText ? addrRef.current : textRef.current)?.focus(), 0);
   }, [initialText]);
 
-  const linked = isPageLink(addr) ? pages.find((p) => p.id === pageIdOf(addr)) : undefined;
+  const linked = findRef(pages, addr);
+  const zl = parseZorLink(addr);
 
+  // OneNote's location picker: notebooks › section groups › sections › pages; a search shows matches with where they are
   const shown = useMemo(() => {
     const s = q.trim().toLowerCase();
     const list = s ? pages.filter((p) => (p.title + " " + p.path).toLowerCase().includes(s)) : pages;
-    return list.slice(0, 400);
+    return list.slice(0, 600);
   }, [pages, q]);
-
-  // group the list by notebook › section, like OneNote's location picker
-  const groups = useMemo(() => {
-    const m = new Map<string, PageRef[]>();
-    for (const p of shown) {
-      if (!m.has(p.path)) m.set(p.path, []);
-      m.get(p.path)!.push(p);
-    }
-    return [...m.entries()];
-  }, [shown]);
+  const searching = !!q.trim();
 
   const ok = () => {
     const href = normalizeAddress(addr);
     if (!href) return;
-    onOk(text.trim() ? text : linked?.title ?? href, href);
+    onOk(text.trim() ? text : linked ? refTitle(linked) : href, href);
   };
 
   return (
@@ -71,28 +66,31 @@ export default function LinkDialog({
           <span>Address:</span>
           <input ref={addrRef} value={addr} onChange={(e) => setAddr(e.target.value)} placeholder="https://… or pick a page below" />
         </label>
-        {linked && <div className="link-to">Links to page: <b>{linked.title || "Untitled page"}</b> <small>{linked.path}</small></div>}
-        {isPageLink(addr) && !linked && <div className="link-to warn">This page no longer exists.</div>}
+        {linked && (
+          <div className="link-to">
+            Links to {KIND_LABEL[linked.kind]}: <b>{refTitle(linked)}</b> {linked.path && <small>{linked.path}</small>}
+          </div>
+        )}
+        {zl && !linked && <div className="link-to warn">This {KIND_LABEL[zl.kind]} no longer exists.</div>}
 
-        <div className="link-pick-head">Or pick a page in ZorNote:</div>
-        <input className="link-search" data-role="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search pages…" />
+        <div className="link-pick-head">Or pick a notebook, section group, section or page in ZorNote:</div>
+        <input className="link-search" data-role="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search…" />
         <div className="link-pages">
-          {groups.map(([path, ps]) => (
-            <div key={path}>
-              <div className="link-path">{path}</div>
-              {ps.map((p) => (
-                <button
-                  key={p.id}
-                  className={"link-page" + (linked?.id === p.id ? " on" : "")}
-                  onClick={() => { setAddr(pageLink(p.id)); if (!text.trim()) setText(p.title); }}
-                  onDoubleClick={() => onOk(text.trim() ? text : p.title, pageLink(p.id))}
-                >
-                  {p.title || "Untitled page"}
-                </button>
-              ))}
-            </div>
+          {shown.map((p) => (
+            <button
+              key={p.kind + p.id}
+              className={`link-page k-${p.kind}` + (linked && linked.kind === p.kind && linked.id === p.id ? " on" : "")}
+              style={searching ? undefined : { paddingLeft: 10 + (p.depth ?? 0) * 16 }}
+              title={p.path ? `${KIND_LABEL[p.kind]} in ${p.path}` : KIND_LABEL[p.kind]}
+              onClick={() => { setAddr(zorLink(p.kind, p.id)); if (!text.trim()) setText(refTitle(p)); }}
+              onDoubleClick={() => onOk(text.trim() ? text : refTitle(p), zorLink(p.kind, p.id))}
+            >
+              <span className="lk-ico">{ICON[p.kind]}</span>
+              {refTitle(p)}
+              {searching && p.path && <small className="lk-path">{p.path}</small>}
+            </button>
           ))}
-          {!groups.length && <div className="hint">No page matches.</div>}
+          {!shown.length && <div className="hint">Nothing matches.</div>}
         </div>
 
         <div className="row link-buttons">

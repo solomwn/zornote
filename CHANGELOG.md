@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.8 – links to section groups, sections and notebooks
+- Right-click a **section group** ▸ **Copy Link to Section Group**; also **Copy Link to Section** (section tab or tree)
+  and **Copy Link to Notebook**. Paste into any page: it becomes a link named after it.
+- Clicking such a link opens the first page of that section group / section / notebook and opens it in the tree.
+- The Link dialog (Ctrl+K) now lists notebooks › section groups › sections › pages as a tree; search shows where each match is.
+
 ## 0.4.7 – links
 - **Link dialog** like OneNote: select words, press **Ctrl+K** (or Insert ▸ Link, Home ▸ link button, right-click ▸ Link…).
   *Text to display* + *Address* (a web address, `name@example.com`, or a page picked from the list of all notebooks, with search).

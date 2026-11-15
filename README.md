@@ -40,7 +40,7 @@ tables by dragging across them and copy/paste them together.
 
 **Pictures** — paste or insert; click to get handles and resize like OneNote (corners keep proportions).
 
-**Links** — Ctrl+K like OneNote: web addresses or links to any ZorNote page; *Copy Link to Page* from the page list.
+**Links** — Ctrl+K like OneNote: web addresses or links to any ZorNote page, section, section group or notebook; right-click ▸ *Copy Link to …*.
 
 **Pages** — PDF export (A4, wide pages go landscape and fit), printing, Markdown/HTML export, page templates.
 

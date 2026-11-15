@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import logo from "./assets/logo.svg";
-import { pageLink, type PageRef } from "./lib/links";
+import { KIND_LABEL, zorLink, type LinkKind, type PageRef } from "./lib/links";
 import Editor, { applyViewPrefs, loadSystemFonts, type RibbonActions } from "./components/Editor";
 import { AskHost, ask } from "./components/Ask";
 import type { AppData, Group, Notebook, Page, Section, Selection } from "./lib/types";
@@ -462,11 +462,22 @@ export default function App() {
     }));
   };
 
+  /** OneNote's "Copy Link to …": the link goes to the clipboard; pasting it makes a link named after the target. */
+  const copyLinkItem = (kind: LinkKind, id: string, name: string): CtxItem => ({
+    label: `Copy Link to ${kind === "group" ? "Section Group" : KIND_LABEL[kind][0].toUpperCase() + KIND_LABEL[kind].slice(1)}`,
+    onClick: () => {
+      navigator.clipboard.writeText(zorLink(kind, id))
+        .then(() => flash(`Link to "${name || "Untitled"}" copied – paste it into any page`))
+        .catch((err) => ask.alert("Could not copy: " + err));
+    },
+  });
+
   const sectionMenu = (nb: Notebook, g: Group | undefined, sec: Section): CtxItem[] => [
     { label: "Rename section", onClick: () => renameSectionAt(nb.id, g?.id, sec) },
     { label: "Section color…", onClick: () => { setColorFor({ nb: nb.id, g: g?.id, s: sec.id }); setTimeout(() => colorInput.current?.click(), 0); } },
     { label: "Move left", onClick: () => shiftSection(nb.id, g?.id, sec.id, -1) },
     { label: "Move right", onClick: () => shiftSection(nb.id, g?.id, sec.id, 1) },
+    copyLinkItem("section", sec.id, sec.name),
     { label: "Delete section", danger: true, onClick: () => deleteSectionAt(nb, g, sec) },
   ];
 
@@ -531,17 +542,24 @@ export default function App() {
     );
   };
 
+  /** Everything a link can point to, in the order of the notebook tree. */
   const allPages: PageRef[] = (() => {
     const out: PageRef[] = [];
     for (const nb of data.notebooks) {
-      const add = (secs: Section[], g?: Group) => {
+      out.push({ kind: "notebook", id: nb.id, title: nb.name, path: "", depth: 0 });
+      const add = (secs: Section[], g: Group | undefined, depth: number) => {
         for (const sec of secs) {
+          const where = [nb.name, g?.name].filter(Boolean).join(" › ");
+          out.push({ kind: "section", id: sec.id, title: sec.name, path: where, depth });
           const path = [nb.name, g?.name, sec.name].filter(Boolean).join(" › ");
-          for (const p of sec.pages) out.push({ id: p.id, title: p.title, path });
+          for (const p of sec.pages) out.push({ kind: "page", id: p.id, title: p.title, path, depth: depth + 1 + lvl(p) });
         }
       };
-      add(nb.sections);
-      for (const g of nb.groups ?? []) add(g.sections, g);
+      add(nb.sections, undefined, 1);
+      for (const g of nb.groups ?? []) {
+        out.push({ kind: "group", id: g.id, title: g.name, path: nb.name, depth: 1 });
+        add(g.sections, g, 2);
+      }
     }
     return out;
   })();
@@ -592,10 +610,15 @@ export default function App() {
       flash(`OneNote colours applied to ${pages} page${pages > 1 ? "s" : ""}`);
     },
     pages: () => allPages,
-    openPage: (id: string) => {
-      const loc = findPage(data, id);
-      if (loc) selectLoc(loc);
-      else ask.alert("That page no longer exists.\n\nIf it was deleted, it may still be in History ▸ Recently Deleted.");
+    openRef: (kind: LinkKind, id: string) => {
+      const loc = findTarget(data, kind, id);
+      if (loc) {
+        selectLoc(loc);
+        // show where it is in the notebook tree
+        setOpen((o) => ({ ...o, [loc.notebookId]: true, ...(loc.groupId ? { [loc.groupId]: true } : {}) }));
+      } else {
+        ask.alert(`That ${KIND_LABEL[kind]} no longer exists.` + (kind === "page" ? "\n\nIf it was deleted, it may still be in History ▸ Recently Deleted." : ""));
+      }
     },
     exportPagePdf: async () => {
       try {
@@ -643,6 +666,7 @@ export default function App() {
                   onClick={() => { if (!selNb) selectLoc(firstLoc(n)); }}
                   onContextMenu={(e) => openCtx(e, [
                     { label: "Rename notebook", onClick: () => renameNotebookAt(n) },
+                    copyLinkItem("notebook", n.id, n.name),
                     { label: "Delete notebook", danger: true, onClick: () => deleteNotebookAt(n) },
                   ])}
                 >
@@ -664,6 +688,7 @@ export default function App() {
                             onContextMenu={(e) => openCtx(e, [
                               { label: "Rename group", onClick: () => renameGroupAt(n, g) },
                               { label: "Duplicate group structure", onClick: () => duplicateGroupAt(n, g) },
+                              copyLinkItem("group", g.id, g.name),
                               { label: "Delete group", danger: true, onClick: () => deleteGroupAt(n, g) },
                             ])}
                             onClick={() => {
@@ -814,14 +839,7 @@ export default function App() {
                       items.push({ label: "Duplicate page", onClick: () => duplicatePageAt(p) });
                       items.push({ label: "Move up", onClick: () => movePage(-1, p) });
                       items.push({ label: "Move down", onClick: () => movePage(1, p) });
-                      items.push({
-                        label: "Copy Link to Page",
-                        onClick: () => {
-                          navigator.clipboard.writeText(pageLink(p.id))
-                            .then(() => flash(`Link to "${p.title || "Untitled page"}" copied – paste it into any page`))
-                            .catch((err) => ask.alert("Could not copy: " + err));
-                        },
-                      });
+                      items.push(copyLinkItem("page", p.id, p.title || "Untitled page"));
                       if (isTauri()) items.push({ label: "Page versions…", onClick: () => { select(section.id, p.id); setHistory({ page: p }); } });
                       openCtx(e, items);
                     }}
@@ -929,6 +947,22 @@ function findPage(d: AppData, pageId: string): Selection | null {
     for (const sec of nb.sections) if (sec.pages.some((p) => p.id === pageId)) return { notebookId: nb.id, sectionId: sec.id, pageId };
     for (const g of nb.groups ?? [])
       for (const sec of g.sections) if (sec.pages.some((p) => p.id === pageId)) return { notebookId: nb.id, groupId: g.id, sectionId: sec.id, pageId };
+  }
+  return null;
+}
+
+/** Where a link leads: a page, or the first page of a section / section group / notebook. Null if it is gone. */
+function findTarget(d: AppData, kind: LinkKind, id: string): Selection | null {
+  if (kind === "page") return findPage(d, id);
+  for (const nb of d.notebooks) {
+    const at = (g: Group | undefined, sec: Section | undefined): Selection | null =>
+      sec && sec.pages[0] ? { notebookId: nb.id, groupId: g?.id, sectionId: sec.id, pageId: sec.pages[0].id } : null;
+    if (kind === "notebook" && nb.id === id) return firstLoc(nb);
+    for (const sec of nb.sections) if (kind === "section" && sec.id === id) return at(undefined, sec);
+    for (const g of nb.groups ?? []) {
+      if (kind === "group" && g.id === id) return at(g, g.sections[0]);
+      for (const sec of g.sections) if (kind === "section" && sec.id === id) return at(g, sec);
+    }
   }
   return null;
 }

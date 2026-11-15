@@ -1,17 +1,48 @@
-/** Links to a page inside ZorNote look like  zornote://page/<page id>  (like OneNote's onenote: links). */
+/**
+ * Links inside ZorNote look like  zornote://<kind>/<id>  (like OneNote's onenote: links):
+ *   zornote://page/<page id>   zornote://section/<section id>
+ *   zornote://group/<group id> zornote://notebook/<notebook id>
+ */
+export type LinkKind = "page" | "section" | "group" | "notebook";
+export const LINK_PREFIX = "zornote://";
 export const PAGE_LINK_PREFIX = "zornote://page/";
 
-export const pageLink = (pageId: string) => PAGE_LINK_PREFIX + pageId;
-export const isPageLink = (href: string | null | undefined) => !!href && href.startsWith(PAGE_LINK_PREFIX);
-export const pageIdOf = (href: string) => href.slice(PAGE_LINK_PREFIX.length).replace(/[/?#].*$/, "");
+const KINDS: LinkKind[] = ["page", "section", "group", "notebook"];
+export const KIND_LABEL: Record<LinkKind, string> = {
+  page: "page", section: "section", group: "section group", notebook: "notebook",
+};
 
-/** A page anywhere in the notebooks, for the link dialog and for following links. */
+export const zorLink = (kind: LinkKind, id: string) => `${LINK_PREFIX}${kind}/${id}`;
+export const pageLink = (pageId: string) => zorLink("page", pageId);
+
+/** {kind, id} of a zornote:// link, or null for anything else. */
+export function parseZorLink(href: string | null | undefined): { kind: LinkKind; id: string } | null {
+  if (!href || !href.startsWith(LINK_PREFIX)) return null;
+  const m = /^([a-z]+)\/([^/?#]+)/.exec(href.slice(LINK_PREFIX.length));
+  if (!m || !KINDS.includes(m[1] as LinkKind)) return null;
+  return { kind: m[1] as LinkKind, id: m[2] };
+}
+
+/** Any link to something inside ZorNote (page, section, section group or notebook). */
+export const isPageLink = (href: string | null | undefined) => !!parseZorLink(href);
+
+/** A page, section, section group or notebook, for the link dialog and for following links. */
 export interface PageRef {
+  kind: LinkKind;
   id: string;
   title: string;
-  /** "Notebook › Group › Section" */
+  /** where it is: "Notebook › Group › Section" (empty for a notebook) */
   path: string;
+  /** indent in the link dialog's tree */
+  depth?: number;
 }
+
+export const findRef = (refs: PageRef[], href: string) => {
+  const z = parseZorLink(href);
+  return z ? refs.find((r) => r.kind === z.kind && r.id === z.id) : undefined;
+};
+
+export const refTitle = (r: PageRef) => r.title || (r.kind === "page" ? "Untitled page" : "Untitled");
 
 /** Add https:// to an address typed without a scheme ("github.com" → "https://github.com"). */
 export function normalizeAddress(a: string): string {
