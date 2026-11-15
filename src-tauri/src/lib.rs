@@ -162,6 +162,16 @@ fn export_pdf(app: AppHandle, path: String, landscape: bool) -> Result<(), Strin
     }
 }
 
+/// Open a web or mail link in the default browser / mail app (only http, https and mailto).
+#[tauri::command]
+fn open_url(app: AppHandle, url: String) -> Result<(), String> {
+    let lower = url.to_ascii_lowercase();
+    if !(lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("mailto:")) {
+        return Err("only web and mail links can be opened".into());
+    }
+    app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
+}
+
 /// The system Print dialog (also offers "Print to File" → PDF).
 #[tauri::command]
 fn print_page(app: AppHandle) -> Result<(), String> {
@@ -211,6 +221,7 @@ pub fn run() {
             data_location,
             installed_fonts,
             export_pdf,
+            open_url,
             print_page,
             write_text_file,
             read_text_file

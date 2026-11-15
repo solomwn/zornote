@@ -13,6 +13,9 @@ import Link from "@tiptap/extension-link";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import { ResizableImage } from "./ResizableImage";
+import { getMarkRange } from "@tiptap/core";
+import LinkDialog from "./LinkDialog";
+import { isPageLink, openExternal, pageIdOf, pageLink, PAGE_LINK_PREFIX, type PageRef } from "../lib/links";
 import Placeholder from "@tiptap/extension-placeholder";
 import Table from "@tiptap/extension-table";
 import TableRow from "@tiptap/extension-table-row";
@@ -156,6 +159,10 @@ export interface RibbonActions {
   openBackups: () => void;
   whereIsData: () => void;
   oneNoteColors: () => void;
+  /** every page of every notebook (for the Link dialog) */
+  pages: () => PageRef[];
+  /** go to a page (a page link was clicked) */
+  openPage: (pageId: string) => void;
   exportPagePdf: () => void;
   printPage: () => void;
   exportPageMd: () => void;
@@ -437,6 +444,15 @@ let menuClip: { html: string; text: string } | null = null;
 const norm = (s: string) => s.replace(/\s+/g, " ").trim();
 
 export default function Editor({ pageId, content, onChange, actions }: Props) {
+  const actionsRef = useRef(actions);
+  const linkDown = useRef<{ x: number; y: number } | null>(null);
+  actionsRef.current = actions;
+  /** Follow a link: a ZorNote page opens here, anything else in the browser. */
+  const followLink = (href: string) => {
+    if (!href) return;
+    if (isPageLink(href)) actionsRef.current.openPage(pageIdOf(href));
+    else void openExternal(href).catch((err) => ask.alert("Could not open the link: " + err));
+  };
   const [symOpen, setSymOpen] = useState(false);
   const [recent, setRecent] = useState<string[]>(loadRecent);
   const [view, setViewState] = useState({ ...viewPrefs });
@@ -452,8 +468,9 @@ export default function Editor({ pageId, content, onChange, actions }: Props) {
   // Format Painter: the marks to paint, set by the button, used on the next selection
   const painter = useRef<readonly Mark[] | null>(null);
   const [painting, setPainting] = useState(false);
+  const [linkDlg, setLinkDlg] = useState<{ text: string; href: string; editing: boolean; from: number; to: number } | null>(null);
   const [shadeFly, setShadeFly] = useState<{ left: number; top: number } | null>(null);
-  const [tmenu, setTmenu] = useState<{ x: number; y: number; inTable: boolean; hasCellSel: boolean; hasSel: boolean; onImage?: boolean } | null>(null);
+  const [tmenu, setTmenu] = useState<{ x: number; y: number; inTable: boolean; hasCellSel: boolean; hasSel: boolean; onImage?: boolean; onLink?: string } | null>(null);
   const rightDown = useRef<Selection | null>(null); // the selection at the moment of the right mouse button press
   const menuSel = useRef<Selection | null>(null); // the selection the open menu works on
   const editor = useEditor({
@@ -479,7 +496,7 @@ export default function Editor({ pageId, content, onChange, actions }: Props) {
       Superscript,
       TextAlign.configure({ types: ["heading", "paragraph"] }),
       Highlight.configure({ multicolor: true }),
-      Link.configure({ openOnClick: false, autolink: true }),
+      Link.configure({ openOnClick: false, autolink: true, protocols: ["zornote"] }), // zornote://page/<id> = a link to a ZorNote page
       TaskList,
       TaskItem.configure({ nested: true }),
       ResizableImage.configure({ inline: false, allowBase64: true }),
@@ -494,7 +511,23 @@ export default function Editor({ pageId, content, onChange, actions }: Props) {
     content,
     onUpdate: ({ editor }) => onChange(editor.getHTML()),
     editorProps: {
-      handlePaste: (_view, event) => {
+      handlePaste: (view, event) => {
+        const plain = (event.clipboardData?.getData("text/plain") ?? "").trim();
+        if (plain.startsWith(PAGE_LINK_PREFIX) && !/\s/.test(plain)) {
+          // a link copied with "Copy Link to Page": paste it as a link named after the page (OneNote does this)
+          const ref = actionsRef.current.pages().find((x) => x.id === pageIdOf(plain));
+          const { from, to, empty } = view.state.selection;
+          const mark = view.state.schema.marks.link.create({ href: plain });
+          const tr = view.state.tr;
+          if (empty) {
+            const label = ref?.title || "Untitled page";
+            tr.insertText(label, from, to).addMark(from, from + label.length, mark);
+          } else {
+            tr.addMark(from, to, mark); // selected words become the link
+          }
+          view.dispatch(tr.scrollIntoView());
+          return true;
+        }
         const items = Array.from(event.clipboardData?.items ?? []);
         const img = items.find((i) => i.type.startsWith("image/"));
         const file = img?.getAsFile();
@@ -502,7 +535,40 @@ export default function Editor({ pageId, content, onChange, actions }: Props) {
         insertImageFile(file);
         return true;
       },
+      handleKeyDown: (_view, event) => {
+        if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "k") {
+          event.preventDefault();
+          openLinkDialogRef.current();
+          return true;
+        }
+        return false;
+      },
       handleDOMEvents: {
+        // a click on a link follows it, like OneNote (Alt+click just puts the cursor there)
+        click: (view, event) => {
+          const me = event as MouseEvent;
+          if (me.button !== 0 || me.altKey || me.shiftKey) return false;
+          const a = (me.target as HTMLElement | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
+          if (!a || !view.dom.contains(a)) return false;
+          // a drag that selects text across a link is not a click on it
+          const d = linkDown.current;
+          if (d && Math.hypot(me.clientX - d.x, me.clientY - d.y) > 4) return false;
+          me.preventDefault();
+          followLink(a.getAttribute("href") ?? "");
+          return true;
+        },
+        mouseover: (_view, event) => {
+          const a = (event.target as HTMLElement | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
+          if (!a) return false;
+          const href = a.getAttribute("href") ?? "";
+          if (isPageLink(href)) {
+            const ref = actionsRef.current.pages().find((x) => x.id === pageIdOf(href));
+            a.title = ref ? `Go to page: ${ref.title || "Untitled page"} (${ref.path})` : "This page no longer exists";
+          } else {
+            a.title = `${href}\nClick to open · Alt+click to edit the text`;
+          }
+          return false;
+        },
         mouseup: (view) => {
           if (!painter.current) return false;
           setTimeout(() => {
@@ -526,7 +592,9 @@ export default function Editor({ pageId, content, onChange, actions }: Props) {
         },
         // A right press collapses a cell selection before the menu opens, so remember what was selected.
         mousedown: (view, event) => {
-          if ((event as MouseEvent).button === 2) rightDown.current = view.state.selection;
+          const me = event as MouseEvent;
+          linkDown.current = { x: me.clientX, y: me.clientY }; // to tell a click on a link from a drag
+          if (me.button === 2) rightDown.current = view.state.selection;
           return false;
         },
         contextmenu: (view, event) => {
@@ -571,7 +639,9 @@ export default function Editor({ pageId, content, onChange, actions }: Props) {
           }
           if (!sel.eq(view.state.selection)) view.dispatch(view.state.tr.setSelection(sel));
           menuSel.current = sel;
+          const linkEl = (me.target as HTMLElement | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
           setTmenu({
+            onLink: linkEl && view.dom.contains(linkEl) ? linkEl.getAttribute("href") ?? undefined : undefined,
             x: me.clientX,
             y: me.clientY,
             inTable: isInCell(view.state),
@@ -676,6 +746,50 @@ export default function Editor({ pageId, content, onChange, actions }: Props) {
     setShadeFly({ left, top: Math.max(4, Math.min(r.top - 6, window.innerHeight - H - 4)) });
   };
 
+  /** Ctrl+K / Link…: the Link dialog for the selected words, the link under the cursor, or a new link. */
+  const openLinkDialog = () => {
+    const { state } = editor;
+    const { from, to, empty } = state.selection;
+    if (editor.isActive("link")) {
+      // the whole link the cursor is in
+      const href = editor.getAttributes("link").href as string;
+      const range = getMarkRange(state.doc.resolve(from), state.schema.marks.link, { href });
+      const a = range?.from ?? from, b = range?.to ?? to;
+      setLinkDlg({ text: state.doc.textBetween(a, b), href, editing: true, from: a, to: b });
+      return;
+    }
+    setLinkDlg({ text: empty ? "" : state.doc.textBetween(from, to, " "), href: "", editing: false, from, to });
+  };
+  const openLinkDialogRef = useRef(openLinkDialog);
+  openLinkDialogRef.current = openLinkDialog;
+
+  const applyLink = (text: string, href: string) => {
+    const d = linkDlg;
+    setLinkDlg(null);
+    if (!d) return;
+    const { state } = editor;
+    const mark = state.schema.marks.link.create({ href });
+    const tr = state.tr;
+    const original = d.from < d.to ? state.doc.textBetween(d.from, d.to, " ") : "";
+    if (d.from < d.to && text === original) {
+      tr.removeMark(d.from, d.to, state.schema.marks.link).addMark(d.from, d.to, mark);
+    } else {
+      // new text: keep the formatting of where it goes, add the link
+      const marks = state.doc.resolve(d.from).marks().filter((m) => m.type !== state.schema.marks.link);
+      tr.replaceWith(d.from, d.to, state.schema.text(text, [...marks, mark]));
+    }
+    editor.view.dispatch(tr.scrollIntoView());
+    editor.view.focus();
+  };
+
+  const removeLink = () => {
+    const d = linkDlg;
+    setLinkDlg(null);
+    if (!d) return;
+    editor.view.dispatch(editor.state.tr.removeMark(d.from, d.to, editor.state.schema.marks.link));
+    editor.view.focus();
+  };
+
   const togglePainter = () => {
     if (painter.current) { painter.current = null; setPainting(false); return; }
     const { selection, storedMarks } = editor.state;
@@ -694,14 +808,6 @@ export default function Editor({ pageId, content, onChange, actions }: Props) {
     });
   };
   const quickSymbols = [...recent, ...DEFAULT_SYMBOLS.filter((x) => !recent.includes(x))].slice(0, 20);
-
-  const setLink = async () => {
-    const prev = editor.getAttributes("link").href as string | undefined;
-    const url = await ask.prompt("Link URL (empty to remove)", prev ?? "https://");
-    if (url === null) return;
-    if (url === "") c().extendMarkRange("link").unsetLink().run();
-    else c().extendMarkRange("link").setLink({ href: url }).run();
-  };
 
   const codeLang = (editor.getAttributes("codeBlock").language as string | undefined) ?? "yaml";
 
@@ -844,7 +950,7 @@ export default function Editor({ pageId, content, onChange, actions }: Props) {
                         </div>
                       )}
                     </Pop>
-                    <B label={<Icon name="link" />} title="Link (Ctrl+K)" active={editor.isActive("link")} onClick={setLink} />
+                    <B label={<Icon name="link" />} title="Link (Ctrl+K)" active={editor.isActive("link")} onClick={openLinkDialog} />
                     <B label={<Icon name="del" color="#d13438" />} title="Delete" onClick={() => c().deleteSelection().run()} />
                   </div>
                 </div>
@@ -916,7 +1022,7 @@ export default function Editor({ pageId, content, onChange, actions }: Props) {
                 </label>
               </RGroup>
               <RGroup label="Links">
-                <RBig icon={<Icon name="link" size={28} />} label="Link" title="Link (Ctrl+K)" onClick={setLink} />
+                <RBig icon={<Icon name="link" size={28} />} label="Link" title="Link (Ctrl+K)" onClick={openLinkDialog} />
               </RGroup>
               <RGroup label="Time Stamp">
                 <RBig icon={<Icon name="date" size={28} />} label="Date" title="Insert today's date (dd-mm-yyyy)" onClick={() => c().insertContent(dateStamp()).run()} />
@@ -1113,6 +1219,17 @@ export default function Editor({ pageId, content, onChange, actions }: Props) {
     <div className={"editor-wrap" + (painting ? " painting" : "")}>
       {host ? createPortal(ribbon, host) : ribbon}
       <EditorContent editor={editor} className="editor" />
+      {linkDlg && (
+        <LinkDialog
+          initialText={linkDlg.text}
+          initialHref={linkDlg.href}
+          editing={linkDlg.editing}
+          pages={actions.pages()}
+          onOk={applyLink}
+          onRemove={removeLink}
+          onCancel={() => { setLinkDlg(null); editor.view.focus(); }}
+        />
+      )}
       {tmenu && (
         <>
           <div className="ctx-overlay" onClick={() => { setTmenu(null); setShadeFly(null); }} onContextMenu={(e) => { e.preventDefault(); setTmenu(null); setShadeFly(null); }} />
@@ -1125,6 +1242,17 @@ export default function Editor({ pageId, content, onChange, actions }: Props) {
             <button disabled={!tmenu.hasSel} onClick={tm(() => copyOrCut(true))}>Cut</button>
             <button disabled={!tmenu.hasSel} onClick={tm(() => copyOrCut(false))}>Copy</button>
             <button onClick={tm(() => { void pasteFromMenu(); })}>Paste</button>
+            {tmenu.onLink ? (
+              <>
+                <div className="ctx-sep" />
+                <button onClick={tm(() => openLinkDialog())}>Edit Link…</button>
+                <button onClick={tm(() => followLink(tmenu.onLink!))}>Open Link</button>
+                <button onClick={tm(() => { void navigator.clipboard.writeText(tmenu.onLink!).catch(() => {}); })}>Copy Link</button>
+                <button onClick={tm(() => { c().extendMarkRange("link").unsetLink().run(); })}>Remove Link</button>
+              </>
+            ) : !tmenu.onImage && (
+              <button onClick={tm(() => openLinkDialog())}>Link…<span className="ctx-key">Ctrl+K</span></button>
+            )}
             {tmenu.onImage && (
               <>
                 <div className="ctx-sep" />

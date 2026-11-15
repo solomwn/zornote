@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.7 – links
+- **Link dialog** like OneNote: select words, press **Ctrl+K** (or Insert ▸ Link, Home ▸ link button, right-click ▸ Link…).
+  *Text to display* + *Address* (a web address, `name@example.com`, or a page picked from the list of all notebooks, with search).
+- **Links to pages inside ZorNote** (`zornote://page/…`): clicking one jumps to that page; a deleted page says so.
+- Clicking a web link opens it in the default browser (Alt+click puts the cursor in the link instead). Hovering shows where it goes.
+- Right-click a link: Edit Link…, Open Link, Copy Link, Remove Link.
+- Page list ▸ right-click ▸ **Copy Link to Page**; paste it into any page and it becomes a link named after that page.
+
 ## 0.4.6 – logo
 - New ZorNote logo: a note page with a bold Z and three section tabs (red, teal, blue) on an indigo tile.
   Files in `branding/` (SVG + PNG; wordmark for light and dark backgrounds).

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import logo from "./assets/logo.svg";
+import { pageLink, type PageRef } from "./lib/links";
 import Editor, { applyViewPrefs, loadSystemFonts, type RibbonActions } from "./components/Editor";
 import { AskHost, ask } from "./components/Ask";
 import type { AppData, Group, Notebook, Page, Section, Selection } from "./lib/types";
@@ -530,6 +531,21 @@ export default function App() {
     );
   };
 
+  const allPages: PageRef[] = (() => {
+    const out: PageRef[] = [];
+    for (const nb of data.notebooks) {
+      const add = (secs: Section[], g?: Group) => {
+        for (const sec of secs) {
+          const path = [nb.name, g?.name, sec.name].filter(Boolean).join(" › ");
+          for (const p of sec.pages) out.push({ id: p.id, title: p.title, path });
+        }
+      };
+      add(nb.sections);
+      for (const g of nb.groups ?? []) add(g.sections, g);
+    }
+    return out;
+  })();
+
   const ribbonActions: RibbonActions = {
     desktop: isTauri(),
     fullPage,
@@ -574,6 +590,12 @@ export default function App() {
       update(() => next);
       setEditorRev((r) => r + 1);
       flash(`OneNote colours applied to ${pages} page${pages > 1 ? "s" : ""}`);
+    },
+    pages: () => allPages,
+    openPage: (id: string) => {
+      const loc = findPage(data, id);
+      if (loc) selectLoc(loc);
+      else ask.alert("That page no longer exists.\n\nIf it was deleted, it may still be in History ▸ Recently Deleted.");
     },
     exportPagePdf: async () => {
       try {
@@ -792,6 +814,14 @@ export default function App() {
                       items.push({ label: "Duplicate page", onClick: () => duplicatePageAt(p) });
                       items.push({ label: "Move up", onClick: () => movePage(-1, p) });
                       items.push({ label: "Move down", onClick: () => movePage(1, p) });
+                      items.push({
+                        label: "Copy Link to Page",
+                        onClick: () => {
+                          navigator.clipboard.writeText(pageLink(p.id))
+                            .then(() => flash(`Link to "${p.title || "Untitled page"}" copied – paste it into any page`))
+                            .catch((err) => ask.alert("Could not copy: " + err));
+                        },
+                      });
                       if (isTauri()) items.push({ label: "Page versions…", onClick: () => { select(section.id, p.id); setHistory({ page: p }); } });
                       openCtx(e, items);
                     }}
@@ -892,6 +922,16 @@ export default function App() {
 
 const fmtTime = (ms: number) =>
   new Date(ms).toLocaleString(undefined, { weekday: "short", day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+
+/** Where a page is (notebook, group, section), or null if it is gone. */
+function findPage(d: AppData, pageId: string): Selection | null {
+  for (const nb of d.notebooks) {
+    for (const sec of nb.sections) if (sec.pages.some((p) => p.id === pageId)) return { notebookId: nb.id, sectionId: sec.id, pageId };
+    for (const g of nb.groups ?? [])
+      for (const sec of g.sections) if (sec.pages.some((p) => p.id === pageId)) return { notebookId: nb.id, groupId: g.id, sectionId: sec.id, pageId };
+  }
+  return null;
+}
 
 function mapAllPages(d: AppData, fn: (p: Page) => Page): AppData {
   const sec = (s: Section): Section => ({ ...s, pages: s.pages.map(fn) });

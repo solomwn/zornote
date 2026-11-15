@@ -685,3 +685,23 @@ table[data-hide-borders="true"], table[data-hide-borders="true"] > tbody > tr > 
 }
 .brand { display: flex; align-items: center; gap: 8px; }
 .brand-logo { width: 22px; height: 22px; flex: none; }
+
+/* Links (OneNote style) */
+.ProseMirror a[href] { color: #0563c1; text-decoration: underline; cursor: pointer; }
+.ProseMirror td[data-dark] a[href] { color: #8ab4f8; }
+@media (prefers-color-scheme: dark) { .ProseMirror a[href] { color: #8ab4f8; } }
+.ctx-key { float: right; color: var(--muted); font-size: 11px; margin-left: 18px; }
+.dialog.link-dialog { width: min(560px, 94vw); max-width: none; }
+.link-row { display: grid; grid-template-columns: 118px 1fr; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 13px; }
+.link-row input, .link-search { padding: 6px 8px; border: 1px solid var(--border); border-radius: 4px; font: inherit; background: var(--panel); color: inherit; width: 100%; box-sizing: border-box; }
+.link-to { font-size: 12.5px; margin: 0 0 8px 126px; color: var(--muted); }
+.link-to b { color: var(--text); }
+.link-to.warn { color: #d13438; }
+.link-pick-head { font-size: 13px; margin: 6px 0; }
+.link-pages { height: 240px; overflow: auto; border: 1px solid var(--border); border-radius: 4px; margin-top: 6px; }
+.link-path { position: sticky; top: 0; background: var(--bg); padding: 4px 10px; font-size: 11.5px; font-weight: 600; color: var(--muted); }
+.dialog .link-page { display: block; width: 100%; border: 0; border-radius: 0; background: transparent; text-align: left; padding: 5px 10px 5px 22px; font-size: 13px; }
+.dialog .link-page:hover { background: var(--bg); }
+.dialog .link-page.on { background: var(--accent-soft); font-weight: 600; }
+.link-buttons { margin-top: 12px; }
+.dialog .danger-text { color: #d13438; }
