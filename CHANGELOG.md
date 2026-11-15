@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.2 – visible selection with tables
+- When a selection runs from lines of text into a table (e.g. text and a black command box inside a container),
+  the lines are now highlighted blue (the table turns grey as before). They were selected but not shown.
+
 ## 0.5.1 – text selection fix
 - Fixed: dragging the mouse across several lines of text made an **invisible** whole-line selection (meant only for
   selecting several tables), so text seemed impossible to select and the next drag moved the text instead.

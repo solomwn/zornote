@@ -623,7 +623,8 @@ button { cursor: pointer; }
 .ProseMirror .tableWrapper.block-selected { width: fit-content; max-width: 100%; }
 /* while whole tables are selected, hide the browser's own text highlight and keep the spacer lines quiet */
 .ProseMirror:has(.block-selected) ::selection, .ProseMirror:has(.block-selected)::selection { background: transparent; }
-.ProseMirror p.block-selected::after { outline: 0; background: transparent; }
+/* text lines in a block selection are highlighted like selected text (only tables turn grey) */
+.ProseMirror .block-selected:not(.tableWrapper):not(table)::after { outline: 0; background: rgba(0, 120, 215, .24); }
 
 /* Table ▸ Hide Borders (OneNote): no lines, cells and shading stay */
 .ProseMirror .tableWrapper.hide-borders > table,
