@@ -80,7 +80,7 @@ sudo apt install ./src-tauri/target/release/bundle/deb/ZorNote_*_amd64.deb
 
 Development: `npm run tauri dev`. Tech: Tauri v2 (Rust), React, TypeScript, TipTap / ProseMirror, SQLite.
 
-Pushing a tag like `v0.4.6` makes GitHub Actions build the `.deb` and attach it to a release.
+To release: bump the version in `package.json`, `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`, push to `main` — GitHub Actions builds the `.deb` and publishes release `vX.Y.Z`.
 
 ## Changelog
 
