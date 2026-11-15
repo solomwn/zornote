@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.0 – simpler new group
+- **New group** now creates just the group with one section, **New Section** (like OneNote), instead of the six standard sections.
+  *Duplicate group structure* still copies the sections of an existing group.
+
 ## 0.4.9 – font size 8.5
 - Font size **8.5** added between 8 and 9 (Home ▸ size list and View ▸ Default size).
 

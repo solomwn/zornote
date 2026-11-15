@@ -369,7 +369,7 @@ export default function App() {
   const addGroup = async () => {
     const name = await ask.prompt("New group name (e.g. a customer)", "New customer");
     if (!name) return;
-    const g = newGroup(name, true);
+    const g = newGroup(name);
     update((d) => ({
       ...mapGroups(d, notebook.id, (gs) => [...gs, g]),
       selection: { notebookId: notebook.id, groupId: g.id, sectionId: g.sections[0].id, pageId: g.sections[0].pages[0].id },
@@ -718,7 +718,7 @@ export default function App() {
           </div>
           <div className="ta-row">
             <span className="ta-label">Group</span>
-            <button className="icon" title="New group with the standard sections" onClick={addGroup}>＋</button>
+            <button className="icon" title="New group (one section: New Section)" onClick={addGroup}>＋</button>
             <button className="icon" title="Rename group" disabled={!group} onClick={renameGroup}>✎</button>
             <button className="icon" title="Duplicate group structure" disabled={!group} onClick={duplicateGroup}>⧉</button>
             <button className="icon" title="Delete group" disabled={!group} onClick={deleteGroup}>🗑</button>

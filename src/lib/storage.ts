@@ -24,11 +24,11 @@ export function newSection(name: string, colorIndex = 0): Section {
   };
 }
 
-/** New group; with `standard` it starts with the six standard sections. */
-export function newGroup(name: string, standard = true): Group {
+/** New group with one section, "New Section" (like OneNote); with `standard` it starts with the six standard sections. */
+export function newGroup(name: string, standard = false): Group {
   const sections: Section[] = standard
     ? STANDARD_SECTIONS.map((s) => ({ id: uid(), name: s.name, color: s.color, pages: [newPage()] }))
-    : [newSection("Section")];
+    : [newSection("New Section")];
   return { id: uid(), name, sections };
 }
 
