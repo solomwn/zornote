@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.4.9 – font size 8.5
+- Font size **8.5** added between 8 and 9 (Home ▸ size list and View ▸ Default size).
+
 ## 0.4.8 – links to section groups, sections and notebooks
 - Right-click a **section group** ▸ **Copy Link to Section Group**; also **Copy Link to Section** (section tab or tree)
   and **Copy Link to Notebook**. Paste into any page: it becomes a link named after it.

@@ -135,7 +135,7 @@ function fontStatus(stack: string): { ok: boolean; using?: string } {
   return { ok: false, using: fams.slice(1).find(fontInstalled) };
 }
 
-const SIZES = ["3", "4", "5", "6", "7", "8", "9", "10", "10.5", "11", "12", "14", "16", "18", "20", "24", "28", "36", "48", "72"];
+const SIZES = ["3", "4", "5", "6", "7", "8", "8.5", "9", "10", "10.5", "11", "12", "14", "16", "18", "20", "24", "28", "36", "48", "72"];
 
 /** First family name of a CSS font stack, normalised, so saved pages match whichever quoting the browser used. */
 const firstFamily = (s?: string | null) =>
