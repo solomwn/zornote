@@ -172,6 +172,79 @@ fn open_url(app: AppHandle, url: String) -> Result<(), String> {
     app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
 }
 
+/// The clipboard exactly as the other app put it there: (plain text, HTML).
+/// The web view's own paste squeezes runs of spaces in HTML (terminal output loses its columns), so a paste
+/// reads the original from GTK instead.
+#[tauri::command]
+async fn clipboard_raw(
+    app: AppHandle,
+    db: State<'_, Db>,
+    seen_plain: Option<String>,
+    seen_html: Option<String>,
+) -> Result<(Option<String>, Option<String>), String> {
+    // ZORNOTE_DEBUG_PASTE=1 zornote  →  every paste is described in paste-debug.txt in the data folder
+    let debug = std::env::var_os("ZORNOTE_DEBUG_PASTE").map(|_| db.dir.join("paste-debug.txt"));
+    #[cfg(target_os = "linux")]
+    {
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.run_on_main_thread(move || {
+            let cb = gtk::Clipboard::get(&gtk::gdk::SELECTION_CLIPBOARD);
+            let targets: Vec<String> = cb
+                .wait_for_targets()
+                .map(|t| t.iter().map(|a| a.name().to_string()).collect())
+                .unwrap_or_default();
+            let html = cb
+                .wait_for_contents(&gtk::gdk::Atom::intern("text/html"))
+                .map(|d| d.data())
+                .filter(|b| !b.is_empty())
+                .map(|b| {
+                    if b.len() >= 2 && b[0] == 0xFF && b[1] == 0xFE {
+                        // UTF-16 (Firefox)
+                        let u: Vec<u16> = b[2..].chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+                        String::from_utf16_lossy(&u)
+                    } else {
+                        String::from_utf8_lossy(&b).into_owned()
+                    }
+                });
+            let text = cb.wait_for_text().map(|s| s.to_string());
+            let _ = tx.send((text, html, targets));
+        })
+        .map_err(|e| e.to_string())?;
+        let got = tauri::async_runtime::spawn_blocking(move || rx.recv_timeout(std::time::Duration::from_secs(3)))
+            .await
+            .map_err(|e| e.to_string())?;
+        if let Some(path) = debug {
+            use std::io::Write;
+            let show = |s: &Option<String>| match s {
+                Some(v) => format!("{} chars: {:?}", v.chars().count(), v.chars().take(600).collect::<String>()),
+                None => "(none)".into(),
+            };
+            let mut out = format!(
+                "=== paste {} | session: {:?} | GDK_BACKEND: {:?}\n",
+                chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+                std::env::var("XDG_SESSION_TYPE").ok(),
+                std::env::var("GDK_BACKEND").ok()
+            );
+            out += &format!("web view plain: {}\nweb view html : {}\n", show(&seen_plain), show(&seen_html));
+            match &got {
+                Ok((t, h, targets)) => {
+                    out += &format!("clipboard types: {}\nclipboard plain: {}\nclipboard html : {}\n", targets.join(", "), show(t), show(h))
+                }
+                Err(_) => out += "clipboard: no answer within 3 s\n",
+            }
+            if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&path) {
+                let _ = f.write_all(out.as_bytes());
+            }
+        }
+        got.map(|(t, h, _)| (t, h)).map_err(|_| "the clipboard did not answer".to_string())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (app, debug, seen_plain, seen_html);
+        Ok((None, None))
+    }
+}
+
 /// The system Print dialog (also offers "Print to File" → PDF).
 #[tauri::command]
 fn print_page(app: AppHandle) -> Result<(), String> {
@@ -222,6 +295,7 @@ pub fn run() {
             installed_fonts,
             export_pdf,
             open_url,
+            clipboard_raw,
             print_page,
             write_text_file,
             read_text_file

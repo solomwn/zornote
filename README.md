@@ -27,7 +27,7 @@ To update, install the newer `.deb` the same way. Your notes are kept (they live
 ## Features
 
 **Organising** — notebooks, section groups, coloured section tabs (drag to reorder), pages and subpages,
-search across all notebooks.
+symbols in page titles (Insert ▸ Symbol), search across all notebooks.
 
 **Ribbon like OneNote** — File · Home · Insert · History · View, plus a *Table* tab when the cursor is in a table.
 Clipboard with Format Painter, fonts and sizes (3–72 pt), OneNote's colour palette, Heading styles.
@@ -40,7 +40,10 @@ tables by dragging across them and copy/paste them together.
 
 **Pictures** — paste or insert; click to get handles and resize like OneNote (corners keep proportions).
 
-**Links** — Ctrl+K like OneNote: web addresses or links to any ZorNote page, section, section group or notebook; right-click ▸ *Copy Link to …*.
+**Links** — Ctrl+K like OneNote: web addresses or links to any ZorNote page, section, section group or notebook; right-click ▸ *Copy Link to …*; with or without underline.
+
+**Right-click like OneNote** — a mini formatting toolbar and *Paste Options* (Keep Source Formatting, Merge Formatting,
+Keep Text Only). Pasted terminal output keeps its spacing.
 
 **Pages** — PDF export (A4, wide pages go landscape and fit), printing, Markdown/HTML export, page templates.
 

@@ -237,7 +237,7 @@ button { cursor: pointer; }
 /* ---- compact tables, esp. the hour grid inside panels ---- */
 .ProseMirror td > p, .ProseMirror th > p { margin: 0; }
 .ProseMirror div[data-callout] td,
-.ProseMirror div[data-callout] th { padding: 1px 4px; font-size: 12px; white-space: nowrap; text-align: center; }
+.ProseMirror div[data-callout] th { padding: 1px 4px; font-size: 12px; white-space: pre; text-align: center; } /* pre: no wrapping, spaces kept */
 .ProseMirror div[data-callout] td > p,
 .ProseMirror div[data-callout] th > p { margin: 2px 0; }
 .ProseMirror div[data-callout] td:first-child { text-align: left; font-weight: 600; }
@@ -251,7 +251,7 @@ button { cursor: pointer; }
 .ProseMirror td > table, .ProseMirror th > table { margin: 0; }
 .ProseMirror td:has(> table) { padding: 3px; }
 .ProseMirror td table td, .ProseMirror td table th {
-  padding: 1px 2px; font-size: 11px; white-space: nowrap; text-align: center;
+  padding: 1px 2px; font-size: 11px; white-space: pre; text-align: center; /* pre: no wrapping, spaces kept */
 }
 .ProseMirror td table td > p, .ProseMirror td table th > p { margin: 2px 0; }
 .ProseMirror td table td:first-child { text-align: left; padding-left: 4px; }
@@ -689,6 +689,8 @@ table[data-hide-borders="true"], table[data-hide-borders="true"] > tbody > tr > 
 
 /* Links (OneNote style) */
 .ProseMirror a[href] { color: #0563c1; text-decoration: underline; cursor: pointer; }
+.ProseMirror a[href][data-no-underline] { text-decoration: none; }
+.link-ul { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 13px; cursor: pointer; }
 .ProseMirror td[data-dark] a[href] { color: #8ab4f8; }
 @media (prefers-color-scheme: dark) { .ProseMirror a[href] { color: #8ab4f8; } }
 .ctx-key { float: right; color: var(--muted); font-size: 11px; margin-left: 18px; }
@@ -711,3 +713,14 @@ table[data-hide-borders="true"], table[data-hide-borders="true"] > tbody > tr > 
 .dialog .link-page.k-group { font-weight: 600; color: var(--muted); }
 .lk-ico { width: 16px; flex: none; text-align: center; font-size: 12px; opacity: .8; }
 .lk-path { margin-left: auto; padding-left: 12px; color: var(--muted); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---- right-click: OneNote-style mini toolbar and Paste Options ---- */
+.ctx-mini { z-index: 101; padding: 4px 6px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ctx-mini .rrow { display: flex; align-items: center; gap: 1px; }
+.ctx-mini button.tb { display: inline-grid; place-items: center; width: auto; min-width: 26px; height: 26px; padding: 0 4px; }
+.ctx-mini .tsel.font { width: 118px; }
+.ctx-mini .tsel.size { width: 64px; }
+.mini-todo { display: inline-grid; place-items: center; width: 17px; height: 17px; border-radius: 50%; background: #7719aa; color: #fff; font-size: 11px; font-weight: 700; }
+.paste-opts { display: flex; gap: 2px; padding: 0 8px 4px 28px; }
+.ctx .paste-opts button { width: 36px; height: 32px; padding: 0; display: grid; place-items: center; }
+.ctx-x { display: inline-block; width: 16px; color: #d13438; font-weight: 700; }

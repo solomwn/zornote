@@ -56,6 +56,10 @@ const P: Record<string, string> = {
   borders: "M3 5h2 M8 5h2 M14 5h2 M19 5h2 M3 19h2 M8 19h2 M14 19h2 M19 19h2 M3 9v2 M3 13v2 M21 9v2 M21 13v2 M12 9v2 M12 13v2",
   chevDown: "M6 9l6 6 6-6",
   pdf: "M6 2h9l5 5v15H6z M15 2v5h5 M8.5 16v-4h1.5a1.3 1.3 0 0 1 0 2.6H8.5 M13 12v4h1a2 2 0 0 0 0-4z M17.5 16v-4h2 M17.5 14h1.5",
+  styles: "M4 19h4 M6 19 11 5h1l5 14 M8.2 13h7 M19 4l1.5 1.5-5 5L14 9z",
+  pasteSource: "M8 4h8v3H8z M6 5H4v16h9 M16 5h2v5 M14 13l7 7 M18 12l3 3-1 1-3-3z M13 18l2-2",
+  pasteMerge: "M8 4h8v3H8z M6 5H4v16h8 M16 5h2v6 M14 15h7 M18 12l3 3-3 3",
+  pasteText: "M8 4h8v3H8z M6 5H4v16h8 M16 5h2v6 M13 21l3.5-9h1L21 21 M14.3 18h5.4",
   printer: "M7 9V3h10v6 M5 9h14a2 2 0 0 1 2 2v6h-4 M7 17H3v-6a2 2 0 0 1 2-2 M7 14h10v7H7z",
 };
 

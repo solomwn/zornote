@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.3
+- **Symbols in the page title**, like OneNote: with the cursor in the title, Insert ▸ Symbol (and More Symbols…) puts the
+  symbol there; it shows in the page list too.
+- A page whose title starts with a symbol (▤ database) shows only that symbol in the page list, without the default page icon.
+- **Links without underline**: *Underline the link* checkbox in the Link dialog, and right-click a link ▸ *Remove Underline* /
+  *Underline Link*.
+- Fixed: right-clicking a link inside a larger selection made *Edit Link…* start a new link instead of editing that one.
+- Fixed: pasting terminal output or other column-aligned text squeezed runs of spaces into one
+  ("NAME           TYPE" → "NAME TYPE"). Spaces and tabs are now kept: a paste reads the system clipboard
+  directly (Ctrl+V, the Paste button and right-click ▸ Paste), because the web view had already squeezed the spaces.
+  For troubleshooting: `ZORNOTE_DEBUG_PASTE=1 zornote` writes what each paste received to `paste-debug.txt` in the data folder.
+- Fixed: runs of spaces were squeezed when shown inside a table within a table (e.g. black command boxes inside a
+  container), and when a saved page was opened again. Both now keep every space.
+- **Right-click like OneNote**: a mini formatting toolbar above the menu (font, size, styles, indent, To Do and other
+  tags, bold/italic/underline, highlight, font colour, bullets, numbering, Format Painter, clear formatting) and
+  **Paste Options**: Keep Source Formatting, Merge Formatting (keeps bold, lists, tables; takes the font, size and
+  colour of where it goes) and Keep Text Only. Plus **Delete** for the selection.
+
 ## 0.5.2 – visible selection with tables
 - When a selection runs from lines of text into a table (e.g. text and a black command box inside a container),
   the lines are now highlighted blue (the table turns grey as before). They were selected but not shown.

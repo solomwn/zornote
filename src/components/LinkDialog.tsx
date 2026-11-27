@@ -7,20 +7,22 @@ const ICON: Record<LinkKind, string> = { notebook: "📓", group: "🗂", sectio
  * OneNote's Link dialog (Ctrl+K): Text to display, Address, and every notebook, section group, section and page to link to.
  */
 export default function LinkDialog({
-  initialText, initialHref, pages, editing, onOk, onRemove, onCancel,
+  initialText, initialHref, initialUnderline = true, pages, editing, onOk, onRemove, onCancel,
 }: {
   initialText: string;
   initialHref: string;
+  initialUnderline?: boolean;
   pages: PageRef[];
   /** an existing link is being edited (shows Remove Link) */
   editing: boolean;
-  onOk: (text: string, href: string) => void;
+  onOk: (text: string, href: string, underline: boolean) => void;
   onRemove: () => void;
   onCancel: () => void;
 }) {
   const [text, setText] = useState(initialText);
   const [addr, setAddr] = useState(initialHref);
   const [q, setQ] = useState("");
+  const [underline, setUnderline] = useState(initialUnderline);
   const addrRef = useRef<HTMLInputElement>(null);
   const textRef = useRef<HTMLInputElement>(null);
 
@@ -43,7 +45,7 @@ export default function LinkDialog({
   const ok = () => {
     const href = normalizeAddress(addr);
     if (!href) return;
-    onOk(text.trim() ? text : linked ? refTitle(linked) : href, href);
+    onOk(text.trim() ? text : linked ? refTitle(linked) : href, href, underline);
   };
 
   return (
@@ -83,7 +85,7 @@ export default function LinkDialog({
               style={searching ? undefined : { paddingLeft: 10 + (p.depth ?? 0) * 16 }}
               title={p.path ? `${KIND_LABEL[p.kind]} in ${p.path}` : KIND_LABEL[p.kind]}
               onClick={() => { setAddr(zorLink(p.kind, p.id)); if (!text.trim()) setText(refTitle(p)); }}
-              onDoubleClick={() => onOk(text.trim() ? text : refTitle(p), zorLink(p.kind, p.id))}
+              onDoubleClick={() => onOk(text.trim() ? text : refTitle(p), zorLink(p.kind, p.id), underline)}
             >
               <span className="lk-ico">{ICON[p.kind]}</span>
               {refTitle(p)}
@@ -92,6 +94,10 @@ export default function LinkDialog({
           ))}
           {!shown.length && <div className="hint">Nothing matches.</div>}
         </div>
+
+        <label className="link-ul">
+          <input type="checkbox" checked={underline} onChange={(e) => setUnderline(e.target.checked)} /> Underline the link
+        </label>
 
         <div className="row link-buttons">
           {editing && <button className="danger-text" onClick={onRemove}>Remove Link</button>}

@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Heading from "@tiptap/extension-heading";
+import Paragraph from "@tiptap/extension-paragraph";
 import Blockquote from "@tiptap/extension-blockquote";
 import HorizontalRule from "@tiptap/extension-horizontal-rule";
 import Underline from "@tiptap/extension-underline";
@@ -43,6 +44,8 @@ import { Icon } from "./icons";
 import { TAG_INFO, Tags } from "./Tags";
 import { duplicateRow, fitTableWidth, isInCell, safeCell, selectCell, selectColumn, selectRow, selectTable, setTableShading } from "./tableTools";
 import { TEMPLATES, dateStamp } from "./templates";
+import { isTauri } from "../lib/storage";
+import { invoke } from "@tauri-apps/api/core";
 
 const lowlight = createLowlight(common);
 
@@ -171,6 +174,8 @@ export interface RibbonActions {
   exportAll: () => void;
   importAll: () => void;
   importOneNote: () => void;
+  /** Insert ▸ Symbol while the cursor is in the page title: put it there (true), like OneNote */
+  insertInTitle: (text: string) => boolean;
 }
 
 interface Props {
@@ -443,6 +448,59 @@ function ShadePicker({
 let menuClip: { html: string; text: string } | null = null;
 const norm = (s: string) => s.replace(/\s+/g, " ").trim();
 
+// ---- pasting column-aligned text (terminal output) with all its spaces ----
+/**
+ * Paragraphs keep their runs of spaces when HTML is read (so aligned columns survive saving and reopening).
+ * Line breaks and indentation in the HTML source are not text, so they become one space here first.
+ * `pasted`: also keep runs of spaces outside paragraphs (HTML from terminals) as non-breaking spaces.
+ */
+function tidyHtmlSpaces(html: string, pasted = false): string {
+  if (!/\n|\r/.test(html) && !(pasted && / {2,}|\t/.test(html))) return html;
+  try {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const walk = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+    for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+      if ((n.parentElement as HTMLElement | null)?.closest("pre, code, style, script, textarea")) continue;
+      let t = n.nodeValue ?? "";
+      t = t.replace(/[ \t]*[\r\n][ \t\r\n]*/g, " ");
+      if (pasted) t = t.replace(/\t/g, "    ").replace(/ {2,}/g, (m) => "\u00a0".repeat(m.length - 1) + " ");
+      n.nodeValue = t;
+    }
+    return doc.body.innerHTML;
+  } catch {
+    return html;
+  }
+}
+
+const textOnly = (h: string) => !/<(table|img|li|h[1-6]|a\s[^>]*href|svg|video)\b/i.test(h) && !h.includes("data-pm-slice");
+const spaced = (t: string) => / {2,}|\t/.test(t);
+/** Paste text whose runs of spaces/tabs matter (true when done); false: paste it the usual way. */
+function pasteSpaced(view: import("@tiptap/pm/view").EditorView, t: string | null, h: string | null): boolean {
+  if (t && spaced(t) && (!h || textOnly(h))) return view.pasteText(t), true;
+  if (!t && h && spaced(h) && textOnly(h)) return view.pasteHTML(h), true; // spaces kept by transformPastedHTML
+  return false;
+}
+
+/**
+ * Paste Options ▸ Merge Formatting: keep bold, italic, lists, links and tables, drop the source's fonts, sizes and
+ * colours of the text, so it takes the formatting of where it goes (like OneNote).
+ */
+function mergeHtml(html: string): string {
+  try {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    doc.body.querySelectorAll<HTMLElement>("*").forEach((el) => {
+      if (el.tagName === "FONT") { el.removeAttribute("face"); el.removeAttribute("size"); el.removeAttribute("color"); }
+      if (["TABLE", "TR", "TD", "TH", "COL", "COLGROUP", "TBODY", "THEAD"].includes(el.tagName)) return;
+      for (const prop of ["font-family", "font-size", "color", "background-color", "background", "font", "line-height"]) el.style.removeProperty(prop);
+      el.removeAttribute("data-color");
+      if (el.tagName === "MARK") el.replaceWith(...Array.from(el.childNodes)); // source highlight
+    });
+    return doc.body.innerHTML;
+  } catch {
+    return html;
+  }
+}
+
 export default function Editor({ pageId, content, onChange, actions }: Props) {
   const actionsRef = useRef(actions);
   const linkDown = useRef<{ x: number; y: number } | null>(null);
@@ -469,7 +527,7 @@ export default function Editor({ pageId, content, onChange, actions }: Props) {
   // Format Painter: the marks to paint, set by the button, used on the next selection
   const painter = useRef<readonly Mark[] | null>(null);
   const [painting, setPainting] = useState(false);
-  const [linkDlg, setLinkDlg] = useState<{ text: string; href: string; editing: boolean; from: number; to: number } | null>(null);
+  const [linkDlg, setLinkDlg] = useState<{ text: string; href: string; underline: boolean; editing: boolean; from: number; to: number } | null>(null);
   const [shadeFly, setShadeFly] = useState<{ left: number; top: number } | null>(null);
   const [tmenu, setTmenu] = useState<{ x: number; y: number; inTable: boolean; hasCellSel: boolean; hasSel: boolean; onImage?: boolean; onLink?: string } | null>(null);
   const rightDown = useRef<Selection | null>(null); // the selection at the moment of the right mouse button press
@@ -478,8 +536,16 @@ export default function Editor({ pageId, content, onChange, actions }: Props) {
     extensions: [
       // OneNote doesn't turn "# ", "> " or "---" into headings, quotes or lines while you type
       // (you start lines with "# az …"); the toolbar still makes headings and quotes.
-      StarterKit.configure({ codeBlock: false, heading: false, blockquote: false, horizontalRule: false }),
-      Heading.extend({ addInputRules: () => [] }).configure({ levels: [1, 2, 3] }),
+      StarterKit.configure({ codeBlock: false, heading: false, blockquote: false, horizontalRule: false, paragraph: false }),
+      // Runs of spaces (terminal output, aligned columns) are kept when a saved page is opened again:
+      // HTML would otherwise squeeze them into one space.
+      Paragraph.extend({ parseHTML: () => [{ tag: "p", preserveWhitespace: true }] }),
+      Heading.extend({
+        addInputRules: () => [],
+        parseHTML() {
+          return this.options.levels.map((level: number) => ({ tag: `h${level}`, attrs: { level }, preserveWhitespace: true as const }));
+        },
+      }).configure({ levels: [1, 2, 3] }),
       Blockquote.extend({ addInputRules: () => [] }),
       HorizontalRule.extend({ addInputRules: () => [] }),
       Underline,
@@ -497,7 +563,19 @@ export default function Editor({ pageId, content, onChange, actions }: Props) {
       Superscript,
       TextAlign.configure({ types: ["heading", "paragraph"] }),
       Highlight.configure({ multicolor: true }),
-      Link.configure({ openOnClick: false, autolink: true, protocols: ["zornote"] }), // zornote://page/<id> = a link to a ZorNote page
+      Link.extend({
+        addAttributes() {
+          return {
+            ...this.parent?.(),
+            // OneNote lets a link have no underline: stored as <a data-no-underline>
+            underline: {
+              default: true,
+              parseHTML: (el: HTMLElement) => !el.hasAttribute("data-no-underline"),
+              renderHTML: (a: { underline?: boolean }) => (a.underline === false ? { "data-no-underline": "" } : {}),
+            },
+          };
+        },
+      }).configure({ openOnClick: false, autolink: true, protocols: ["zornote"] }), // zornote://page/<id> = a link to a ZorNote page
       TaskList,
       TaskItem.configure({ nested: true }),
       ResizableImage.configure({ inline: false, allowBase64: true }),
@@ -509,9 +587,12 @@ export default function Editor({ pageId, content, onChange, actions }: Props) {
       Callout,
       Placeholder.configure({ placeholder: "Start typing, or paste an image…" }),
     ],
-    content,
+    content: tidyHtmlSpaces(content),
     onUpdate: ({ editor }) => onChange(editor.getHTML()),
     editorProps: {
+      // Pasted HTML: line breaks and indentation inside the HTML are not text (one space); runs of spaces typed
+      // in the text are (terminal output that arrives only as HTML), so they are kept as non-breaking spaces.
+      transformPastedHTML: (html) => tidyHtmlSpaces(html, true),
       handlePaste: (view, event) => {
         const plain = (event.clipboardData?.getData("text/plain") ?? "").trim();
         if (parseZorLink(plain) && !/\s/.test(plain)) {
@@ -532,8 +613,30 @@ export default function Editor({ pageId, content, onChange, actions }: Props) {
         const items = Array.from(event.clipboardData?.items ?? []);
         const img = items.find((i) => i.type.startsWith("image/"));
         const file = img?.getAsFile();
-        if (!file) return false;
-        insertImageFile(file);
+        if (file) {
+          insertImageFile(file);
+          return true;
+        }
+        // Terminal output and other column-aligned text ("NAME     TYPE     AGE"): the HTML copy squeezes runs of
+        // spaces into one. Keep every space and tab, like OneNote.
+        const rawPlain = event.clipboardData?.getData("text/plain") ?? "";
+        const html = event.clipboardData?.getData("text/html") ?? "";
+        if (!isTauri()) {
+          if (html && spaced(rawPlain) && textOnly(html)) return view.pasteText(rawPlain);
+          return false;
+        }
+        if (!html && !rawPlain) return false;
+        // In the app the web view may already have squeezed the spaces of what it hands over (its HTML, and on some
+        // systems its plain text too), so for every text paste read the clipboard as the other app put it there.
+        event.preventDefault();
+        void invoke<[string | null, string | null]>("clipboard_raw", { seenPlain: rawPlain, seenHtml: html })
+          .then(([t, h]) => {
+            if (!pasteSpaced(view, t, h)) {
+              if (html) view.pasteHTML(html);
+              else view.pasteText(rawPlain);
+            }
+          })
+          .catch(() => (html ? view.pasteHTML(html) : view.pasteText(rawPlain)));
         return true;
       },
       handleKeyDown: (_view, event) => {
@@ -641,6 +744,18 @@ export default function Editor({ pageId, content, onChange, actions }: Props) {
             }
             sel = keep && down ? down : TextSelection.near($hit, -1);
           }
+          // right-click on a link: the link items (Edit, Remove, Underline…) act on that link, so the cursor goes into it
+          const onA = (me.target as HTMLElement | null)?.closest?.("a[href]") as HTMLElement | null;
+          if (onA && view.dom.contains(onA) && !(sel instanceof CellSelection)) {
+            try {
+              const start = view.posAtDOM(onA, 0), end = start + (onA.textContent ?? "").length;
+              const within = sel.from >= start && sel.to <= end;
+              if (!within && end > start) {
+                const at = Math.max(start + 1, Math.min(hit?.pos ?? start + 1, end - 1));
+                sel = end - start >= 2 ? TextSelection.create(view.state.doc, at) : TextSelection.create(view.state.doc, start, end);
+              }
+            } catch { /* keep the selection */ }
+          }
           if (!sel.eq(view.state.selection)) view.dispatch(view.state.tr.setSelection(sel));
           menuSel.current = sel;
           const linkEl = (me.target as HTMLElement | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
@@ -678,7 +793,7 @@ export default function Editor({ pageId, content, onChange, actions }: Props) {
   // Swap content when the user selects a different page.
   useEffect(() => {
     if (editor && editor.getHTML() !== content) {
-      editor.commands.setContent(content, false);
+      editor.commands.setContent(tidyHtmlSpaces(content), false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageId, editor]);
@@ -723,15 +838,62 @@ export default function Editor({ pageId, content, onChange, actions }: Props) {
     document.execCommand(cut ? "cut" : "copy");
   };
 
-  const pasteFromMenu = async () => {
-    let sys = "";
-    try { sys = await navigator.clipboard.readText(); } catch { /* clipboard reading not allowed here */ }
+  /**
+   * Paste from a menu or the ribbon, like OneNote's Paste Options:
+   *  source – as it was copied (Ctrl+V); merge – keep the structure, take the formatting of where it goes;
+   *  text – only the text (it takes the formatting of where it goes).
+   */
+  const pasteAs = async (mode: "source" | "merge" | "text" = "source") => {
     const view = editor.view;
+    let t: string | null = null, h: string | null = null;
+    if (isTauri()) {
+      // the clipboard as the other app put it there (the web view squeezes runs of spaces)
+      try { [t, h] = await invoke<[string | null, string | null]>("clipboard_raw", { seenPlain: null, seenHtml: null }); } catch { /* below */ }
+    }
+    if (t == null && h == null) {
+      try {
+        for (const item of await navigator.clipboard.read()) {
+          if (item.types.includes("text/html")) h = await (await item.getType("text/html")).text();
+          if (item.types.includes("text/plain")) t = await (await item.getType("text/plain")).text();
+        }
+      } catch {
+        try { t = await navigator.clipboard.readText(); } catch { /* clipboard reading not allowed here */ }
+      }
+    }
     view.focus();
-    // our own copy still matches the clipboard (or the clipboard cannot be read): paste it with all its structure
-    if (menuClip && (!sys || norm(sys) === norm(menuClip.text))) view.pasteHTML(menuClip.html);
-    else if (sys) view.pasteText(sys);
+    // our own copy still matches the clipboard (or the clipboard cannot be read): it has all its structure
+    const ours = !!menuClip && (!t || norm(t) === norm(menuClip.text));
+    if (ours) { h = menuClip!.html; t = t || menuClip!.text; }
+    if (mode === "text") {
+      if (t) view.pasteText(t);
+      return;
+    }
+    if (!ours && pasteSpaced(view, t, h)) return; // terminal output: the text with every space
+    if (!h) {
+      if (t) view.pasteText(t);
+      return;
+    }
+    if (mode === "source") {
+      view.pasteHTML(h);
+      return;
+    }
+    // merge: the formatting of where it goes (font, size, colour at the cursor) goes onto the pasted text
+    const from = view.state.selection.from;
+    const here = view.state.selection.$from.marks().find((m) => m.type.name === "textStyle");
+    view.pasteHTML(mergeHtml(h));
+    const to = view.state.selection.from;
+    const type = view.state.schema.marks.textStyle;
+    if (!here || !type || to <= from) return;
+    const keep = Object.fromEntries(Object.entries(here.attrs).filter(([, v]) => v != null));
+    const tr = view.state.tr;
+    view.state.doc.nodesBetween(from, to, (node, pos) => {
+      if (!node.isText) return;
+      const old = node.marks.find((m) => m.type === type);
+      tr.addMark(Math.max(from, pos), Math.min(to, pos + node.nodeSize), type.create({ ...(old?.attrs ?? {}), ...keep }));
+    });
+    if (tr.docChanged) view.dispatch(tr);
   };
+  const pasteFromMenu = () => pasteAs("source");
 
   useEffect(() => { if (!tmenu) setShadeFly(null); }, [tmenu]);
 
@@ -759,20 +921,20 @@ export default function Editor({ pageId, content, onChange, actions }: Props) {
       const href = editor.getAttributes("link").href as string;
       const range = getMarkRange(state.doc.resolve(from), state.schema.marks.link, { href });
       const a = range?.from ?? from, b = range?.to ?? to;
-      setLinkDlg({ text: state.doc.textBetween(a, b), href, editing: true, from: a, to: b });
+      setLinkDlg({ text: state.doc.textBetween(a, b), href, underline: editor.getAttributes("link").underline !== false, editing: true, from: a, to: b });
       return;
     }
-    setLinkDlg({ text: empty ? "" : state.doc.textBetween(from, to, " "), href: "", editing: false, from, to });
+    setLinkDlg({ text: empty ? "" : state.doc.textBetween(from, to, " "), href: "", underline: true, editing: false, from, to });
   };
   const openLinkDialogRef = useRef(openLinkDialog);
   openLinkDialogRef.current = openLinkDialog;
 
-  const applyLink = (text: string, href: string) => {
+  const applyLink = (text: string, href: string, underline = true) => {
     const d = linkDlg;
     setLinkDlg(null);
     if (!d) return;
     const { state } = editor;
-    const mark = state.schema.marks.link.create({ href });
+    const mark = state.schema.marks.link.create({ href, underline });
     const tr = state.tr;
     const original = d.from < d.to ? state.doc.textBetween(d.from, d.to, " ") : "";
     if (d.from < d.to && text === original) {
@@ -804,7 +966,7 @@ export default function Editor({ pageId, content, onChange, actions }: Props) {
   };
 
   const insertSymbol = (ch: string) => {
-    c().insertContent(ch).run();
+    if (!actionsRef.current.insertInTitle(ch)) c().insertContent(ch).run();
     setRecent((r) => {
       const next = [ch, ...r.filter((x) => x !== ch)].slice(0, 20);
       saveRecent(next);
@@ -833,6 +995,46 @@ export default function Editor({ pageId, content, onChange, actions }: Props) {
     else if (v === "quote") ch.toggleBlockquote().run();
     else ch.setHeading({ level: Number(v[1]) as 1 | 2 | 3 }).run();
   };
+
+  /** The Font and Size boxes (ribbon and the right-click mini toolbar); `done` runs after a choice (closes the menu). */
+  const fontSelect = (done?: () => void) => (
+    <select
+      className={"tsel font" + (curFontMissing ? " missing" : "")}
+      title={curFontMissing ? `${curFont} is not installed on this computer, so another font is shown${curFontStatus?.using ? ` (${curFontStatus.using})` : ""}. See README → Fonts.` : "Font"}
+      value={curFont}
+      onChange={(e) => {
+        restoreMenuSel();
+        const f = FONTS.find((x) => x.label === e.target.value);
+        if (f) c().setFontFamily(f.stack).run();
+        else c().unsetFontFamily().run();
+        done?.();
+      }}
+    >
+      <option value="">Default font</option>
+      {FONTS.map((f) => {
+        const st = fontStatus(f.stack);
+        return (
+          <option key={f.label} value={f.label} style={{ fontFamily: f.stack, color: st.ok ? undefined : "#8a8886" }}>
+            {f.label}{st.ok ? "" : st.using ? ` — not installed (shows ${st.using})` : " — not installed"}
+          </option>
+        );
+      })}
+    </select>
+  );
+  const sizeSelect = (done?: () => void) => (
+    <select
+      className="tsel size" title="Font size (pt)" value={SIZES.includes(curSize) ? curSize : ""}
+      onChange={(e) => {
+        restoreMenuSel();
+        if (e.target.value) c().setFontSize(`${e.target.value}pt`).run();
+        else c().unsetFontSize().run();
+        done?.();
+      }}
+    >
+      <option value="">Size</option>
+      {SIZES.map((sz) => <option key={sz} value={sz}>{sz}</option>)}
+    </select>
+  );
 
   const inTable = editor.isActive("table");
   const inList = editor.isActive("bulletList") || editor.isActive("orderedList") || editor.isActive("taskList");
@@ -892,33 +1094,8 @@ export default function Editor({ pageId, content, onChange, actions }: Props) {
               <RGroup label="Basic Text">
                 <div className="rcol">
                   <div className="rrow">
-                    <select
-                      className={"tsel font" + (curFontMissing ? " missing" : "")}
-                      title={curFontMissing ? `${curFont} is not installed on this computer, so another font is shown${curFontStatus?.using ? ` (${curFontStatus.using})` : ""}. See README → Fonts.` : "Font"}
-                      value={curFont}
-                      onChange={(e) => {
-                        const f = FONTS.find((x) => x.label === e.target.value);
-                        if (f) c().setFontFamily(f.stack).run();
-                        else c().unsetFontFamily().run();
-                      }}
-                    >
-                      <option value="">Default font</option>
-                      {FONTS.map((f) => {
-                        const st = fontStatus(f.stack);
-                        return (
-                          <option key={f.label} value={f.label} style={{ fontFamily: f.stack, color: st.ok ? undefined : "#8a8886" }}>
-                            {f.label}{st.ok ? "" : st.using ? ` — not installed (shows ${st.using})` : " — not installed"}
-                          </option>
-                        );
-                      })}
-                    </select>
-                    <select
-                      className="tsel size" title="Font size (pt)" value={SIZES.includes(curSize) ? curSize : ""}
-                      onChange={(e) => (e.target.value ? c().setFontSize(`${e.target.value}pt`).run() : c().unsetFontSize().run())}
-                    >
-                      <option value="">Size</option>
-                      {SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
-                    </select>
+                    {fontSelect()}
+                    {sizeSelect()}
                     <B label={<Icon name="bullets" />} title="Bullets" active={editor.isActive("bulletList")} onClick={() => c().toggleBulletList().run()} />
                     <B label={<Icon name="numbers" />} title="Numbering" active={editor.isActive("orderedList")} onClick={() => c().toggleOrderedList().run()} />
                     <B label={<Icon name="outdent" />} title="Decrease indent (Shift+Tab)" onClick={() => inList && c().liftListItem(itemType).run()} />
@@ -1227,6 +1404,7 @@ export default function Editor({ pageId, content, onChange, actions }: Props) {
         <LinkDialog
           initialText={linkDlg.text}
           initialHref={linkDlg.href}
+          initialUnderline={linkDlg.underline}
           editing={linkDlg.editing}
           pages={actions.pages()}
           onOk={applyLink}
@@ -1234,18 +1412,87 @@ export default function Editor({ pageId, content, onChange, actions }: Props) {
           onCancel={() => { setLinkDlg(null); editor.view.focus(); }}
         />
       )}
-      {tmenu && (
+      {tmenu && (() => {
+        // OneNote: a small formatting toolbar sits just above the right-click menu
+        const MINI_H = 66;
+        const left = Math.max(8, Math.min(tmenu.x, window.innerWidth - 330));
+        // the menu must fit below the toolbar: a table's menu is tall, so move both up when needed
+        const MENU_H = tmenu.inTable ? 640 : 250;
+        let top = Math.max(MINI_H + 12, Math.min(tmenu.y, window.innerHeight - MENU_H - 8));
+        let miniTop = top - MINI_H - 4;
+        if (miniTop < 4) { miniTop = 4; top = MINI_H + 12; }
+        const close = () => { setTmenu(null); setShadeFly(null); };
+        return (
         <>
-          <div className="ctx-overlay" onClick={() => { setTmenu(null); setShadeFly(null); }} onContextMenu={(e) => { e.preventDefault(); setTmenu(null); setShadeFly(null); }} />
+          <div className="ctx-overlay" onClick={close} onContextMenu={(e) => { e.preventDefault(); close(); }} />
+          {!tmenu.onImage && (
+            <div className="ctx ctx-mini" style={{ left, top: miniTop }} onMouseDown={(e) => { if (!(e.target as HTMLElement).closest("select")) e.preventDefault(); }}>
+              <div className="rrow">
+                {fontSelect(close)}
+                {sizeSelect(close)}
+                <Pop label={<Icon name="styles" />} title="Styles">
+                  {(closePop) => (
+                    <div className="pop-list">
+                      {([["h1", "Heading 1"], ["h2", "Heading 2"], ["h3", "Heading 3"], ["p", "Normal"], ["quote", "Quote"], ["code", "Code"]] as const).map(([v, l]) => (
+                        <button key={v} className={"pop-item st-" + v + (curStyle === v ? " on" : "")} onClick={() => { closePop(); tm(() => setStyle(v))(); }}>{l}</button>
+                      ))}
+                    </div>
+                  )}
+                </Pop>
+                <B label={<Icon name="outdent" />} title="Decrease indent" onClick={tm(() => { if (inList) c().liftListItem(itemType).run(); })} />
+                <B label={<Icon name="indent" />} title="Increase indent" onClick={tm(() => { if (inList) c().sinkListItem(itemType).run(); })} />
+                <B label={<span className="mini-todo">✓</span>} title="To Do tag (Ctrl+1)" active={tagOf === "todo" || tagOf === "done"} onClick={tm(() => c().toggleTag("todo").run())} />
+                <Pop label={<Icon name="chevDown" />} title="Tags">
+                  {(closePop) => (
+                    <div className="pop-list">
+                      {TAG_INFO.map((t) => (
+                        <button key={t.tag} className="pop-item" onClick={() => { closePop(); tm(() => c().toggleTag(t.tag).run())(); }}>
+                          <span className={"tag-ico " + t.tag} /> {t.label} ({t.key})
+                        </button>
+                      ))}
+                      <button className="pop-item" onClick={() => { closePop(); tm(() => c().removeTags().run())(); }}>Remove tag (Ctrl+0)</button>
+                    </div>
+                  )}
+                </Pop>
+              </div>
+              <div className="rrow">
+                <B label={<b>B</b>} title="Bold (Ctrl+B)" active={editor.isActive("bold")} onClick={tm(() => c().toggleBold().run())} />
+                <B label={<i>I</i>} title="Italic (Ctrl+I)" active={editor.isActive("italic")} onClick={tm(() => c().toggleItalic().run())} />
+                <B label={<u>U</u>} title="Underline (Ctrl+U)" active={editor.isActive("underline")} onClick={tm(() => c().toggleUnderline().run())} />
+                <Pop label={<span className="hl-ico">ab</span>} title="Text highlight color">
+                  {(closePop) => (
+                    <Swatches colors={FILL_COLORS} close={closePop} clearLabel="No Color" current={editor.getAttributes("highlight").color as string | undefined}
+                      onPick={(col) => tm(() => c().setHighlight({ color: col }).run())()} onClear={() => tm(() => c().unsetHighlight().run())()} />
+                  )}
+                </Pop>
+                <Pop label={<span className="fc-ico">A</span>} title="Font color">
+                  {(closePop) => (
+                    <Swatches colors={TEXT_COLORS} close={closePop} current={editor.getAttributes("textStyle").color as string | undefined}
+                      onPick={(col) => tm(() => c().setColor(col).run())()} onClear={() => tm(() => c().unsetColor().run())()} />
+                  )}
+                </Pop>
+                <B label={<Icon name="bullets" />} title="Bullets" active={editor.isActive("bulletList")} onClick={tm(() => c().toggleBulletList().run())} />
+                <B label={<Icon name="numbers" />} title="Numbering" active={editor.isActive("orderedList")} onClick={tm(() => c().toggleOrderedList().run())} />
+                <B label={<Icon name="painter" />} title="Format Painter" active={painting} onClick={tm(() => togglePainter())} />
+                <B label={<Icon name="clear" />} title="Clear all formatting" onClick={tm(() => c().unsetAllMarks().clearNodes().run())} />
+              </div>
+            </div>
+          )}
           <div
             className="ctx tmenu"
-            style={{ left: Math.max(8, Math.min(tmenu.x, window.innerWidth - 250)), top: Math.max(8, Math.min(tmenu.y, window.innerHeight - (tmenu.inTable ? 520 : 170))) }}
+            style={{ left, top, maxHeight: window.innerHeight - top - 8 }}
             onMouseDown={(e) => e.preventDefault()}
             onMouseOver={(e) => { if (!(e.target as HTMLElement).closest(".shade-open")) setShadeFly(null); }}
           >
             <button disabled={!tmenu.hasSel} onClick={tm(() => copyOrCut(true))}>Cut</button>
             <button disabled={!tmenu.hasSel} onClick={tm(() => copyOrCut(false))}>Copy</button>
-            <button onClick={tm(() => { void pasteFromMenu(); })}>Paste</button>
+            <div className="ctx-label">Paste Options:</div>
+            <div className="paste-opts">
+              <button title="Keep Source Formatting (Ctrl+V)" onClick={tm(() => { void pasteAs("source"); })}><Icon name="pasteSource" size={22} /></button>
+              <button title="Merge Formatting: keep the structure, use the formatting of where it goes" onClick={tm(() => { void pasteAs("merge"); })}><Icon name="pasteMerge" size={22} /></button>
+              <button title="Keep Text Only" onClick={tm(() => { void pasteAs("text"); })}><Icon name="pasteText" size={22} /></button>
+            </div>
+            <button disabled={!tmenu.hasSel} onClick={tm(() => c().deleteSelection().run())}><span className="ctx-x">✕</span> Delete</button>
             {tmenu.onLink ? (
               <>
                 <div className="ctx-sep" />
@@ -1253,6 +1500,11 @@ export default function Editor({ pageId, content, onChange, actions }: Props) {
                 <button onClick={tm(() => followLink(tmenu.onLink!))}>Open Link</button>
                 <button onClick={tm(() => { void navigator.clipboard.writeText(tmenu.onLink!).catch(() => {}); })}>Copy Link</button>
                 <button onClick={tm(() => { c().extendMarkRange("link").unsetLink().run(); })}>Remove Link</button>
+                {editor.getAttributes("link").underline === false ? (
+                  <button onClick={tm(() => { c().extendMarkRange("link").updateAttributes("link", { underline: true }).run(); })}>Underline Link</button>
+                ) : (
+                  <button onClick={tm(() => { c().extendMarkRange("link").updateAttributes("link", { underline: false }).run(); })}>Remove Underline</button>
+                )}
               </>
             ) : !tmenu.onImage && (
               <button onClick={tm(() => openLinkDialog())}>Link…<span className="ctx-key">Ctrl+K</span></button>
@@ -1335,7 +1587,8 @@ export default function Editor({ pageId, content, onChange, actions }: Props) {
             </div>
           )}
         </>
-      )}
+        );
+      })()}
       {symOpen && <SymbolDialog onInsert={insertSymbol} onClose={() => setSymOpen(false)} />}
     </div>
   );

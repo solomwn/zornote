@@ -84,6 +84,9 @@ export default function App() {
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropHint, setDropHint] = useState<{ id: string; after: boolean } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  /** the page title box, and where its cursor was (null once the cursor moves into the page body) */
+  const titleRef = useRef<HTMLInputElement>(null);
+  const titleCaret = useRef<{ start: number; end: number } | null>(null);
   const addPageRef = useRef<(sub: boolean) => void>(() => {});
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const saveTimer = useRef<number | undefined>(undefined);
@@ -98,6 +101,8 @@ export default function App() {
 
   useEffect(() => { applyViewPrefs(); if (isTauri()) void loadSystemFonts(); }, []);
   useEffect(() => { loadData().then(setData); }, []);
+  // a symbol goes into the title only while the cursor is still in this page's title
+  useEffect(() => { titleCaret.current = null; }, [data?.selection.pageId]);
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if (e.key === "Escape") { setCtx(null); setFullPage(false); }
@@ -634,6 +639,17 @@ export default function App() {
     exportNotebookMd: exportNb,
     exportAll: exportBackup,
     importAll: importBackup,
+    insertInTitle: (text: string) => {
+      const caret = titleCaret.current;
+      if (!caret) return false;
+      const t = page.title;
+      const start = Math.min(caret.start, t.length), end = Math.min(caret.end, t.length);
+      updatePage({ title: t.slice(0, start) + text + t.slice(end) });
+      const at = start + text.length;
+      titleCaret.current = { start: at, end: at };
+      setTimeout(() => { const el = titleRef.current; if (el) { el.focus(); el.setSelectionRange(at, at); } }, 0);
+      return true;
+    },
     importOneNote: () => setShowImport(true),
   };
 
@@ -762,11 +778,14 @@ export default function App() {
         </div>
 
         <div className="body">
-          <section className="canvas">
+          <section className="canvas" onFocus={(e) => { if ((e.target as HTMLElement).closest?.(".ProseMirror")) titleCaret.current = null; }}>
             <div className="title-row">
               <input
+                ref={titleRef}
                 className="title"
                 value={page.title}
+                onFocus={(e) => { titleCaret.current = { start: e.currentTarget.selectionStart ?? 0, end: e.currentTarget.selectionEnd ?? 0 }; }}
+                onSelect={(e) => { titleCaret.current = { start: e.currentTarget.selectionStart ?? 0, end: e.currentTarget.selectionEnd ?? 0 }; }}
                 placeholder="Page title"
                 onChange={(e) => updatePage({ title: e.target.value })}
               />
@@ -852,7 +871,8 @@ export default function App() {
                       ) : (
                         <span className="chev" />
                       )}
-                      <i className="pg-ico" />
+                      {/* a title that starts with a symbol (▤ database) shows only that symbol, like OneNote */}
+                      {!startsWithSymbol(p.title) && <i className="pg-ico" />}
                       {p.title || "Untitled page"}
                     </div>
                   </div>
@@ -949,6 +969,11 @@ function findPage(d: AppData, pageId: string): Selection | null {
       for (const sec of g.sections) if (sec.pages.some((p) => p.id === pageId)) return { notebookId: nb.id, groupId: g.id, sectionId: sec.id, pageId };
   }
   return null;
+}
+
+/** "▤ database", "★ notes": the title begins with a symbol (Insert ▸ Symbol), not a letter or number. */
+function startsWithSymbol(title: string): boolean {
+  return /^\s*[\p{So}\p{Sm}\p{Sc}\p{Sk}\p{Extended_Pictographic}]/u.test(title);
 }
 
 /** Where a link leads: a page, or the first page of a section / section group / notebook. Null if it is gone. */
